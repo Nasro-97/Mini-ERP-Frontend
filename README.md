@@ -1,0 +1,11 @@
+
+  # B2B ERP System Setup
+
+  This is a code bundle for B2B ERP System Setup. The original project is available at https://www.figma.com/design/7uruabvFGuHL9WY0KvKGOV/B2B-ERP-System-Setup.
+
+  ## Running the code
+
+  Run `npm i` to install the dependencies.
+
+  Run `npm run dev` to start the development server.
+  

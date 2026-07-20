@@ -1,0 +1,174 @@
+/* Commerce-Flow Design System - Inspired by modern dashboards */
+
+:root {
+  /* Colors */
+  --color-background: #F5F7FA;
+  --color-navy: #4C5FD5;
+  --color-navy-dark: #3D4DB8;
+  --color-coral: #FF6B6B;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+
+  --color-text-dark: #1F2937;
+  --color-text-medium: #6B7280;
+  --color-text-light: #9CA3AF;
+  --color-white: #ffffff;
+  --color-hover-bg: #F9FAFB;
+  --color-border: #E5E7EB;
+  --color-shadow: rgba(0, 0, 0, 0.04);
+
+  /* Icon circle backgrounds */
+  --color-icon-orange: #FFEDD5;
+  --color-icon-cyan: #CFFAFE;
+  --color-icon-purple: #F3E8FF;
+  --color-icon-pink: #FCE7F3;
+
+  /* Spacing */
+  --card-padding: 24px;
+  --card-gap: 20px;
+
+  /* Border Radius */
+  --radius-card: 20px;
+  --radius-button: 12px;
+  --radius-input: 12px;
+  --radius-badge: 9999px;
+  --radius-icon: 14px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-dark);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Card Styles */
+.card {
+  background: var(--color-white);
+  border-radius: var(--radius-card);
+  padding: var(--card-padding);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* Button Styles */
+.btn-primary {
+  background-color: var(--color-navy);
+  color: var(--color-white);
+  border-radius: var(--radius-button);
+  padding: 12px 24px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.btn-primary:hover {
+  background-color: var(--color-navy-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(76, 95, 213, 0.3);
+}
+
+.btn-secondary {
+  background-color: var(--color-white);
+  color: var(--color-text-dark);
+  border-radius: var(--radius-button);
+  padding: 12px 24px;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-hover-bg);
+  border-color: var(--color-navy);
+}
+
+/* Input Styles */
+.input {
+  border-radius: var(--radius-input);
+  border: 1px solid var(--color-border);
+  padding: 12px 16px;
+  width: 100%;
+  transition: all 0.2s;
+  font-size: 14px;
+  background-color: var(--color-white);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-navy);
+  box-shadow: 0 0 0 3px rgba(76, 95, 213, 0.1);
+}
+
+.input::placeholder {
+  color: var(--color-text-light);
+}
+
+/* Icon Circles */
+.icon-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.icon-circle-orange {
+  background-color: var(--color-icon-orange);
+  color: #EA580C;
+}
+
+.icon-circle-cyan {
+  background-color: var(--color-icon-cyan);
+  color: #0891B2;
+}
+
+.icon-circle-purple {
+  background-color: var(--color-icon-purple);
+  color: #9333EA;
+}
+
+.icon-circle-pink {
+  background-color: var(--color-icon-pink);
+  color: #DB2777;
+}
+
+/* Stats Cards */
+.stat-card {
+  background: var(--color-white);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+
+/* Table Styles */
+.table-row {
+  transition: background-color 0.15s;
+}
+
+.table-row:hover {
+  background-color: var(--color-hover-bg);
+}

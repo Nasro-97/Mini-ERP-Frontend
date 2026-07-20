@@ -1,0 +1,1912 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Plus, Edit2, Trash2, MoreVertical, X, Mail } from 'lucide-react';
+import { apiClient } from '../api/client';
+import { StatusBadge } from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useToast } from '../components/Toast';
+import { DatePicker } from '../components/DatePicker';
+
+interface Request {
+  id: string;
+  request_number: string;
+  title: string;
+  status: string;
+  priority: string;
+  client_id: string;
+  client_reference: string;
+  description: string;
+  notes: string;
+  request_date: string;
+  deadline: string;
+  sales_manager_notes: string;
+  assigned_user_id: string;
+  sales_manager_id: string;
+  procurement_assigned_user_id: string;
+  created_by_user_id: string;
+  created_at: string;
+}
+
+interface User {
+  id: string;
+  fullname: string;
+  email: string;
+}
+
+interface Item {
+  id: string;
+  line_number: number;
+  description: string;
+  quantity: number;
+  unit: string;
+  notes: string;
+}
+
+interface Client {
+  id: string;
+  company_name: string;
+  email: string;
+  phone_1: string;
+  address: string;
+}
+
+interface RFQ {
+  id: string;
+  rfq_number: string;
+  request_id: string;
+  supplier_id: string;
+  supplier_name: string;
+  contact_id: string | null;
+  contact_name: string | null;
+  status: string;
+  response_deadline: string;
+  sent_at: string | null;
+  notes: string;
+  created_at: string;
+}
+
+interface Supplier {
+  id: string;
+  company_name: string;
+}
+
+interface Contact {
+  id: string;
+  fullname: string;
+  position: string;
+}
+
+type TabType = 'rfqs' | 'quotations' | 'offers' | 'purchase-order';
+
+export const RequestDetailPage: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { user, hasSalesAccess, isProcurement, isCOD } = useAuth();
+
+  const [request, setRequest] = useState<Request | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
+  const [client, setClient] = useState<Client | null>(null);
+  const [teamUsers, setTeamUsers] = useState<{
+    createdBy: User | null;
+    salesRep: User | null;
+    salesManager: User | null;
+    procurement: User | null;
+  }>({
+    createdBy: null,
+    salesRep: null,
+    salesManager: null,
+    procurement: null,
+  });
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabType>('rfqs');
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [deleteItemConfirm, setDeleteItemConfirm] = useState<{ show: boolean; itemId: string | null }>({
+    show: false,
+    itemId: null,
+  });
+  const [deleteRequestConfirm, setDeleteRequestConfirm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [modalNotes, setModalNotes] = useState('');
+  const [assignUserId, setAssignUserId] = useState('');
+  const [procurementUsers, setProcurementUsers] = useState<Array<{ id: string; fullname: string }>>([]);
+  const { showToast } = useToast();
+
+  // RFQs state
+  const [rfqs, setRfqs] = useState<RFQ[]>([]);
+  const [showCreateRfqModal, setShowCreateRfqModal] = useState(false);
+  const [showEditRfqModal, setShowEditRfqModal] = useState(false);
+  const [editingRfq, setEditingRfq] = useState<RFQ | null>(null);
+  const [expandedRfqId, setExpandedRfqId] = useState<string | null>(null);
+  const [openRfqMenuId, setOpenRfqMenuId] = useState<string | null>(null);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [confirmRfqAction, setConfirmRfqAction] = useState<{
+    show: boolean;
+    type: 'decline' | 'delete' | null;
+    rfq: RFQ | null;
+  }>({ show: false, type: null, rfq: null });
+  const rfqMenuRef = useRef<HTMLDivElement>(null);
+
+  const [rfqForm, setRfqForm] = useState({
+    supplier_id: '',
+    contact_id: '',
+    response_deadline: null as Date | null,
+    notes: '',
+  });
+
+  const [newItem, setNewItem] = useState({
+    description: '',
+    quantity: 1,
+    unit: 'pcs',
+    notes: '',
+  });
+
+  useEffect(() => {
+    if (id) {
+      fetchRequest();
+      fetchItems();
+      if (activeTab === 'rfqs') {
+        fetchRfqs();
+      }
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (request?.client_id) {
+      fetchClient();
+    }
+  }, [request?.client_id]);
+
+  useEffect(() => {
+    if (request) {
+      fetchTeamUsers();
+    }
+  }, [request]);
+
+  useEffect(() => {
+    if (activeTab === 'rfqs' && id) {
+      fetchRfqs();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (rfqMenuRef.current && !rfqMenuRef.current.contains(event.target as Node)) {
+        setOpenRfqMenuId(null);
+      }
+    };
+
+    if (openRfqMenuId) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openRfqMenuId]);
+
+  const fetchRequest = async () => {
+    try {
+      const data = await apiClient.get<Request>(`/requests/${id}`);
+      setRequest(data);
+    } catch (error) {
+      console.error('Error fetching request:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchItems = async () => {
+    try {
+      const data = await apiClient.get<Item[]>(`/requests/${id}/items`);
+      setItems(data);
+    } catch (error) {
+      console.error('Error fetching items:', error);
+    }
+  };
+
+  const fetchClient = async () => {
+    try {
+      const data = await apiClient.get<Client>(`/clients/${request?.client_id}`);
+      setClient(data);
+    } catch (error) {
+      console.error('Error fetching client:', error);
+    }
+  };
+
+  const fetchRfqs = async () => {
+    try {
+      const data = await apiClient.get<RFQ[]>(`/rfqs/request/${id}`);
+      setRfqs(data);
+    } catch (error) {
+      console.error('Error fetching RFQs:', error);
+    }
+  };
+
+  const fetchSuppliers = async () => {
+    try {
+      const data = await apiClient.get<Supplier[]>('/suppliers/');
+      setSuppliers(data);
+    } catch (error) {
+      console.error('Error fetching suppliers:', error);
+    }
+  };
+
+  const fetchContacts = async (supplierId: string) => {
+    try {
+      const data = await apiClient.get<Contact[]>(`/contacts/company/supplier/${supplierId}`);
+      setContacts(data);
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+      setContacts([]);
+    }
+  };
+
+  const fetchTeamUsers = async () => {
+    try {
+      const userPromises: Promise<User | null>[] = [];
+      const userIds = [
+        request?.created_by_user_id,
+        request?.assigned_user_id,
+        request?.sales_manager_id,
+        request?.procurement_assigned_user_id,
+      ];
+
+      for (const userId of userIds) {
+        if (userId) {
+          userPromises.push(
+            apiClient.get<User>(`/users/${userId}`).catch(() => null)
+          );
+        } else {
+          userPromises.push(Promise.resolve(null));
+        }
+      }
+
+      const [createdBy, salesRep, salesManager, procurement] = await Promise.all(userPromises);
+      setTeamUsers({ createdBy, salesRep, salesManager, procurement });
+    } catch (error) {
+      console.error('Error fetching team users:', error);
+    }
+  };
+
+  const handleAddItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Prevent double submission
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      if (editingItem) {
+        await apiClient.patch(`/items/${editingItem.id}`, newItem);
+        setEditingItem(null);
+      } else {
+        await apiClient.post(`/requests/${id}/items`, newItem);
+      }
+      setNewItem({ description: '', quantity: 1, unit: 'pcs', notes: '' });
+      setShowAddItem(false);
+      // Optimistically update UI before refetch
+      await fetchItems();
+    } catch (error) {
+      console.error('Error saving item:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditItem = (item: Item) => {
+    setEditingItem(item);
+    setNewItem({
+      description: item.description,
+      quantity: item.quantity,
+      unit: item.unit,
+      notes: item.notes || '',
+    });
+    setShowAddItem(true);
+  };
+
+  const handleCancelEdit = () => {
+    setShowAddItem(false);
+    setEditingItem(null);
+    setNewItem({ description: '', quantity: 1, unit: 'pcs', notes: '' });
+  };
+
+  const handleDeleteItem = async (itemId: string) => {
+    try {
+      await apiClient.delete(`/items/${itemId}`);
+      setDeleteItemConfirm({ show: false, itemId: null });
+      fetchItems();
+    } catch (error) {
+      console.error('Error deleting item:', error);
+    }
+  };
+
+  const handleDeleteRequest = async () => {
+    try {
+      await apiClient.delete(`/requests/${id}`);
+      navigate('/requests');
+    } catch (error) {
+      console.error('Error deleting request:', error);
+    }
+  };
+
+  const handleWorkflowAction = async (action: string, params?: any) => {
+    try {
+      let endpoint = '';
+      switch (action) {
+        case 'submit':
+          endpoint = `/requests/${id}/submit`;
+          break;
+        case 'approve':
+          endpoint = `/requests/${id}/approve${params?.notes ? `?notes=${encodeURIComponent(params.notes)}` : ''}`;
+          break;
+        case 'reject':
+          endpoint = `/requests/${id}/reject?notes=${encodeURIComponent(params.notes)}`;
+          break;
+        case 'assign-procurement':
+          endpoint = `/requests/${id}/assign-procurement?assigned_user_id=${params.userId}`;
+          break;
+      }
+      await apiClient.patch(endpoint, {});
+      fetchRequest();
+    } catch (error) {
+      console.error('Error performing workflow action:', error);
+    }
+  };
+
+  const fetchProcurementUsers = async () => {
+    try {
+      const users = await apiClient.get<Array<{ id: string; fullname: string; roles: Array<{ name: string }> }>>('/users/');
+      const procUsers = users.filter(u =>
+        u.roles.some(r => r.name === 'Procurement Manager' || r.name === 'Procurement Specialist' || r.name === 'COD')
+      );
+      setProcurementUsers(procUsers);
+    } catch (error) {
+      console.error('Error fetching procurement users:', error);
+    }
+  };
+
+  const handleApprove = async () => {
+    await handleWorkflowAction('approve', { notes: modalNotes });
+    setShowApproveModal(false);
+    setModalNotes('');
+  };
+
+  const handleReject = async () => {
+    if (!modalNotes.trim()) {
+      alert('Rejection notes are required');
+      return;
+    }
+    await handleWorkflowAction('reject', { notes: modalNotes });
+    setShowRejectModal(false);
+    setModalNotes('');
+  };
+
+  const handleAssignProcurement = async () => {
+    if (!assignUserId) {
+      alert('Please select a user');
+      return;
+    }
+    await handleWorkflowAction('assign-procurement', { userId: assignUserId });
+    setShowAssignModal(false);
+    setAssignUserId('');
+  };
+
+  // RFQ handlers
+  const handleCreateRfq = async () => {
+    try {
+      if (!rfqForm.supplier_id || !rfqForm.response_deadline) {
+        showToast('Please fill in all required fields', 'error');
+        return;
+      }
+
+      await apiClient.post('/rfqs/', {
+        request_id: id,
+        supplier_id: rfqForm.supplier_id,
+        contact_id: rfqForm.contact_id || null,
+        response_deadline: rfqForm.response_deadline.toISOString(),
+        notes: rfqForm.notes,
+      });
+
+      setShowCreateRfqModal(false);
+      setRfqForm({
+        supplier_id: '',
+        contact_id: '',
+        response_deadline: null,
+        notes: '',
+      });
+      setContacts([]);
+      fetchRfqs();
+      showToast('RFQ created successfully', 'success');
+    } catch (error: any) {
+      console.error('Error creating RFQ:', error);
+      showToast(error.response?.data?.detail || 'Failed to create RFQ', 'error');
+    }
+  };
+
+  const handleEditRfq = async () => {
+    try {
+      if (!editingRfq || !rfqForm.response_deadline) {
+        showToast('Please fill in all required fields', 'error');
+        return;
+      }
+
+      await apiClient.patch(`/rfqs/${editingRfq.id}`, {
+        response_deadline: rfqForm.response_deadline.toISOString(),
+        notes: rfqForm.notes,
+      });
+
+      setShowEditRfqModal(false);
+      setEditingRfq(null);
+      setRfqForm({
+        supplier_id: '',
+        contact_id: '',
+        response_deadline: null,
+        notes: '',
+      });
+      fetchRfqs();
+      showToast('RFQ updated successfully', 'success');
+    } catch (error) {
+      console.error('Error updating RFQ:', error);
+      showToast('Failed to update RFQ', 'error');
+    }
+  };
+
+  const handleGenerateMailto = async (rfq: RFQ) => {
+    try {
+      const response = await apiClient.post<{
+        to: string;
+        cc: string;
+        subject: string;
+        body: string;
+        rfq_number: string;
+      }>(`/rfqs/${rfq.id}/generate-mailto`, {});
+
+      const { to, cc, subject, body } = response;
+      const mailtoLink = `mailto:${to}?cc=${cc}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.location.href = mailtoLink;
+
+      await fetchRfqs();
+      await fetchRequest();
+      showToast('Email client opened. RFQ marked as sent.', 'success');
+      setOpenRfqMenuId(null);
+    } catch (error) {
+      console.error('Error generating mailto:', error);
+      showToast('Failed to generate email', 'error');
+    }
+  };
+
+  const handleDeclineRfq = async (rfq: RFQ) => {
+    try {
+      await apiClient.patch(`/rfqs/${rfq.id}/decline`, {});
+      await fetchRfqs();
+      await fetchRequest();
+      setConfirmRfqAction({ show: false, type: null, rfq: null });
+      showToast('RFQ declined successfully', 'success');
+    } catch (error) {
+      console.error('Error declining RFQ:', error);
+      showToast('Failed to decline RFQ', 'error');
+    }
+  };
+
+  const handleDeleteRfq = async (rfq: RFQ) => {
+    try {
+      await apiClient.delete(`/rfqs/${rfq.id}`);
+      await fetchRfqs();
+      setConfirmRfqAction({ show: false, type: null, rfq: null });
+      showToast('RFQ deleted successfully', 'success');
+    } catch (error) {
+      console.error('Error deleting RFQ:', error);
+      showToast('Failed to delete RFQ', 'error');
+    }
+  };
+
+  const openCreateRfqModal = () => {
+    fetchSuppliers();
+    setShowCreateRfqModal(true);
+  };
+
+  const openEditRfqModal = (rfq: RFQ) => {
+    setEditingRfq(rfq);
+    setRfqForm({
+      supplier_id: rfq.supplier_id,
+      contact_id: rfq.contact_id || '',
+      response_deadline: new Date(rfq.response_deadline),
+      notes: rfq.notes,
+    });
+    setShowEditRfqModal(true);
+    setOpenRfqMenuId(null);
+  };
+
+  const getRfqStatusStyle = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return { backgroundColor: '#F3F4F6', color: '#6B7280' };
+      case 'sent':
+        return { backgroundColor: '#DBEAFE', color: '#1E40AF' };
+      case 'quote_received':
+        return { backgroundColor: '#D1FAE5', color: '#065F46' };
+      case 'declined':
+        return { backgroundColor: '#FEE2E2', color: '#DC2626' };
+      default:
+        return { backgroundColor: '#F3F4F6', color: '#6B7280' };
+    }
+  };
+
+  const getPriorityStyle = (priority: string) => {
+    const styles = {
+      low: { backgroundColor: '#F3F4F6', color: '#6B7280' },
+      normal: { backgroundColor: '#DBEAFE', color: '#1E40AF' },
+      high: { backgroundColor: '#FED7AA', color: '#C2410C' },
+      urgent: { backgroundColor: '#FEE2E2', color: '#991B1B' },
+    };
+    return styles[priority as keyof typeof styles] || styles.normal;
+  };
+
+  // Determine visible tabs based on role - Order: RFQs, Quotations, Offers, Purchase Order
+  const visibleTabs: TabType[] = [];
+
+  if (isProcurement || isCOD) {
+    visibleTabs.push('rfqs', 'quotations');
+  }
+  if (hasSalesAccess) {
+    visibleTabs.push('offers');
+  }
+  if (isProcurement || isCOD) {
+    visibleTabs.push('purchase-order');
+  }
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center" style={{ minHeight: '100vh' }}>
+        <div style={{ color: '#9CA3AF' }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (!request) {
+    return (
+      <div className="p-6 flex items-center justify-center" style={{ minHeight: '100vh' }}>
+        <div style={{ color: '#9CA3AF' }}>Request not found</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6" style={{ backgroundColor: '#F5F7FA', minHeight: '100vh', animation: 'fadeIn 0.3s ease-out' }}>
+      <div className="max-w-7xl mx-auto">
+        {/* Back Link */}
+        <Link
+          to="/requests"
+          className="inline-flex items-center gap-2 mb-4 text-sm font-medium transition-colors"
+          style={{ color: '#6B7280' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#4C5FD5';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#6B7280';
+          }}
+        >
+          <ArrowLeft size={16} />
+          Back to Requests
+        </Link>
+
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-sm font-mono" style={{ color: '#9CA3AF' }}>
+              {request.request_number}
+            </span>
+            <StatusBadge status={request.status} />
+            <span
+              className="px-2 py-0.5 rounded-md text-xs font-medium"
+              style={getPriorityStyle(request.priority)}
+            >
+              {request.priority}
+            </span>
+          </div>
+          <h1 className="text-2xl font-bold mb-2" style={{ color: '#1F2937' }}>
+            {request.title}
+          </h1>
+          <div className="flex items-center gap-3 text-sm" style={{ color: '#6B7280' }}>
+            <span>{client?.company_name || 'Loading client...'}</span>
+            <span>•</span>
+            <span>Ref: {request.client_reference}</span>
+            <span>•</span>
+            <span>Created {new Date(request.created_at).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Tabs (65%) */}
+          <div className="lg:col-span-2">
+            {/* Tab Navigation */}
+            <div
+              className="flex items-center gap-1 p-1 mb-4 rounded-lg"
+              style={{ backgroundColor: '#F3F4F6' }}
+            >
+              {visibleTabs.map((tab) => {
+                const tabLabels: Record<TabType, string> = {
+                  overview: 'Overview',
+                  rfqs: 'RFQ',
+                  quotations: 'Quotation',
+                  offers: 'Offers',
+                  'purchase-order': 'PO',
+                };
+
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className="flex-1 px-4 py-2 text-sm font-medium rounded-md transition-all"
+                    style={{
+                      backgroundColor: activeTab === tab ? '#ffffff' : 'transparent',
+                      color: activeTab === tab ? '#1F2937' : '#6B7280',
+                      boxShadow: activeTab === tab ? '0 1px 2px rgba(0, 0, 0, 0.05)' : 'none',
+                    }}
+                  >
+                    {tabLabels[tab]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Tab Content */}
+            <div
+              key={activeTab}
+              className="space-y-4"
+              style={{ animation: 'fadeSlideIn 0.3s ease-out' }}
+            >
+              {/* Overview Tab */}
+              {activeTab === 'overview' && (
+                <>
+                  {/* Request Information Card */}
+                  <div
+                    className="p-5 rounded-xl"
+                    style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                    }}
+                  >
+                    <h3 className="text-base font-semibold mb-4" style={{ color: '#1F2937' }}>
+                      Request Information
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                          Description
+                        </label>
+                        <p className="text-sm" style={{ color: '#1F2937' }}>
+                          {request.description || '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                          Notes
+                        </label>
+                        <p className="text-sm" style={{ color: '#1F2937' }}>
+                          {request.notes || '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                          Request Date
+                        </label>
+                        <p className="text-sm" style={{ color: '#1F2937' }}>
+                          {new Date(request.request_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                          Deadline
+                        </label>
+                        <p className="text-sm" style={{ color: '#1F2937' }}>
+                          {new Date(request.deadline).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {request.sales_manager_notes && (
+                        <div className="col-span-2">
+                          <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                            Sales Manager Notes
+                          </label>
+                          <p className="text-sm" style={{ color: '#1F2937' }}>
+                            {request.sales_manager_notes}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items Card */}
+                  <div
+                    className="p-5 rounded-xl"
+                    style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-base font-semibold" style={{ color: '#1F2937' }}>
+                        Request Items
+                      </h3>
+                      {request.status === 'draft' && (
+                        <button
+                          onClick={() => setShowAddItem(!showAddItem)}
+                          className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white rounded-lg"
+                          style={{ background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)' }}
+                        >
+                          <Plus size={14} />
+                          Add Item
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Add/Edit Item Form */}
+                    {showAddItem && (
+                      <form onSubmit={handleAddItem} className="mb-4 p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                        <h4 className="text-sm font-semibold mb-3" style={{ color: '#1F2937' }}>
+                          {editingItem ? 'Edit Item' : 'Add New Item'}
+                        </h4>
+                        <div className="grid grid-cols-4 gap-3 mb-3">
+                          <div className="col-span-2">
+                            <input
+                              type="text"
+                              required
+                              placeholder="Description"
+                              value={newItem.description}
+                              onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
+                              className="w-full px-3 py-2 text-sm rounded-lg"
+                              style={{ backgroundColor: '#ffffff', border: '1px solid #E5E7EB' }}
+                            />
+                          </div>
+                          <div>
+                            <input
+                              type="number"
+                              required
+                              min="1"
+                              placeholder="Qty"
+                              value={newItem.quantity}
+                              onChange={(e) => setNewItem({ ...newItem, quantity: parseInt(e.target.value) || 1 })}
+                              className="w-full px-3 py-2 text-sm rounded-lg"
+                              style={{ backgroundColor: '#ffffff', border: '1px solid #E5E7EB' }}
+                            />
+                          </div>
+                          <div>
+                            <select
+                              value={newItem.unit}
+                              onChange={(e) => setNewItem({ ...newItem, unit: e.target.value })}
+                              className="w-full px-3 py-2 text-sm rounded-lg"
+                              style={{ backgroundColor: '#ffffff', border: '1px solid #E5E7EB' }}
+                            >
+                              <option value="pcs">pcs</option>
+                              <option value="kg">kg</option>
+                              <option value="ton">ton</option>
+                              <option value="meter">meter</option>
+                              <option value="liter">liter</option>
+                              <option value="box">box</option>
+                              <option value="set">set</option>
+                              <option value="roll">roll</option>
+                              <option value="other">other</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="Notes (optional)"
+                            value={newItem.notes}
+                            onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
+                            className="flex-1 px-3 py-2 text-sm rounded-lg"
+                            style={{ backgroundColor: '#ffffff', border: '1px solid #E5E7EB' }}
+                          />
+                          <button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-all"
+                            style={{
+                              background: isSubmitting ? '#9CA3AF' : 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)',
+                              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                              opacity: isSubmitting ? 0.7 : 1,
+                            }}
+                          >
+                            {isSubmitting ? 'Adding...' : 'Add'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="px-4 py-2 text-sm font-medium rounded-lg"
+                            style={{ backgroundColor: '#F3F4F6', color: '#1F2937' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Items Table */}
+                    {items.length === 0 ? (
+                      <div className="text-center py-8" style={{ color: '#9CA3AF' }}>
+                        No items yet
+                      </div>
+                    ) : (
+                      <table className="w-full">
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid #F3F4F6' }}>
+                            <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>#</th>
+                            <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>Description</th>
+                            <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>Qty</th>
+                            <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>Unit</th>
+                            <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>Notes</th>
+                            {request.status === 'draft' && (
+                              <th className="text-left py-2 px-2 text-xs font-medium" style={{ color: '#9CA3AF' }}>Actions</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.map((item) => (
+                            <tr key={item.id} style={{ borderBottom: '1px solid #F9FAFB' }}>
+                              <td className="py-2 px-2 text-sm" style={{ color: '#6B7280' }}>{item.line_number}</td>
+                              <td className="py-2 px-2 text-sm" style={{ color: '#1F2937' }}>{item.description}</td>
+                              <td className="py-2 px-2 text-sm" style={{ color: '#1F2937' }}>{item.quantity}</td>
+                              <td className="py-2 px-2 text-sm" style={{ color: '#1F2937' }}>{item.unit}</td>
+                              <td className="py-2 px-2 text-sm" style={{ color: '#6B7280' }}>{item.notes || '-'}</td>
+                              {request.status === 'draft' && (
+                                <td className="py-2 px-2">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleEditItem(item)}
+                                      className="p-1 rounded hover:bg-blue-50"
+                                    >
+                                      <Edit2 size={14} style={{ color: '#4C5FD5' }} />
+                                    </button>
+                                    <button
+                                      onClick={() => setDeleteItemConfirm({ show: true, itemId: item.id })}
+                                      className="p-1 rounded hover:bg-red-50"
+                                    >
+                                      <Trash2 size={14} style={{ color: '#EF4444' }} />
+                                    </button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Other Tabs - Coming Soon */}
+              {['rfqs', 'quotations', 'offers', 'purchase-order'].includes(activeTab) && (
+                <div
+                  className="p-5 rounded-xl text-center py-12"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                    color: '#9CA3AF',
+                  }}
+                >
+                  Coming soon
+                </div>
+              )}
+
+              {/* RFQs Tab */}
+              {activeTab === 'rfqs' && (
+                <>
+                  {/* Check if procurement is assigned */}
+                  {request.status !== 'draft' && request.status !== 'submitted' && request.status !== 'approved_for_sourcing' ? (
+                    <div
+                      className="p-5 rounded-xl"
+                      style={{
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #E5E7EB',
+                        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                      }}
+                    >
+                      {/* Header with Create Button */}
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-base font-semibold" style={{ color: '#1F2937' }}>
+                          RFQs ({rfqs.length})
+                        </h3>
+                        {(isProcurement || isCOD) && (
+                          <button
+                            onClick={openCreateRfqModal}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white rounded-lg transition-all"
+                            style={{ background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)' }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = 'translateY(-1px)';
+                              e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(76, 95, 213, 0.3)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = 'translateY(0)';
+                              e.currentTarget.style.boxShadow = 'none';
+                            }}
+                          >
+                            <Plus size={16} />
+                            Create RFQ
+                          </button>
+                        )}
+                      </div>
+
+                      {/* RFQs Table */}
+                      {rfqs.length === 0 ? (
+                        <div className="text-center py-8" style={{ color: '#9CA3AF' }}>
+                          No RFQs yet. Create your first RFQ to get started.
+                        </div>
+                      ) : (
+                        <div style={{ overflow: 'visible' }}>
+                          <table className="w-full">
+                            <thead style={{ backgroundColor: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  RFQ #
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  Supplier
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  Status
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  Response Deadline
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  Sent At
+                                </th>
+                                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: '#6B7280' }}>
+                                  Actions
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rfqs.map((rfq) => (
+                                <React.Fragment key={rfq.id}>
+                                  <tr style={{ borderBottom: '1px solid #E5E7EB' }}>
+                                    <td className="px-3 py-3">
+                                      <span className="text-sm font-mono" style={{ color: '#6B7280' }}>
+                                        {rfq.rfq_number}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-3">
+                                      <span className="text-sm font-medium" style={{ color: '#1F2937' }}>
+                                        {rfq.supplier_name}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-3">
+                                      <span
+                                        className="px-2 py-0.5 rounded-md text-xs font-medium"
+                                        style={getRfqStatusStyle(rfq.status)}
+                                      >
+                                        {rfq.status.replace('_', ' ')}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-3">
+                                      <span className="text-sm" style={{ color: '#6B7280' }}>
+                                        {new Date(rfq.response_deadline).toLocaleDateString()}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-3">
+                                      <span className="text-sm" style={{ color: '#6B7280' }}>
+                                        {rfq.sent_at ? new Date(rfq.sent_at).toLocaleDateString() : '-'}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-3">
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={() => setExpandedRfqId(expandedRfqId === rfq.id ? null : rfq.id)}
+                                          className="text-sm font-medium transition-colors"
+                                          style={{ color: '#4C5FD5' }}
+                                          onMouseEnter={(e) => {
+                                            e.currentTarget.style.color = '#6366F1';
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.style.color = '#4C5FD5';
+                                          }}
+                                        >
+                                          {expandedRfqId === rfq.id ? 'Hide' : 'View'}
+                                        </button>
+                                        {(isProcurement || isCOD) && (
+                                          <div className="relative" ref={openRfqMenuId === rfq.id ? rfqMenuRef : null}>
+                                            <button
+                                              onClick={() => setOpenRfqMenuId(openRfqMenuId === rfq.id ? null : rfq.id)}
+                                              className="p-1 rounded-md transition-colors"
+                                              style={{ color: '#9CA3AF' }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.backgroundColor = '#F3F4F6';
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.backgroundColor = 'transparent';
+                                              }}
+                                            >
+                                              <MoreVertical size={16} />
+                                            </button>
+                                            {openRfqMenuId === rfq.id && (
+                                              <div
+                                                className="absolute right-0 top-full mt-1 w-48 py-1 rounded-lg z-10"
+                                                style={{
+                                                  backgroundColor: '#ffffff',
+                                                  border: '1px solid #E5E7EB',
+                                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                                                }}
+                                              >
+                                                {rfq.status === 'draft' && (
+                                                  <>
+                                                    <button
+                                                      onClick={() => openEditRfqModal(rfq)}
+                                                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors"
+                                                      style={{ color: '#1F2937' }}
+                                                      onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = '#F3F4F6';
+                                                      }}
+                                                      onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                      }}
+                                                    >
+                                                      <Edit2 size={14} />
+                                                      Edit
+                                                    </button>
+                                                    <button
+                                                      onClick={() => handleGenerateMailto(rfq)}
+                                                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors"
+                                                      style={{ color: '#1F2937' }}
+                                                      onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = '#F3F4F6';
+                                                      }}
+                                                      onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                      }}
+                                                    >
+                                                      <Mail size={14} />
+                                                      Generate Mailto
+                                                    </button>
+                                                    <button
+                                                      onClick={() => {
+                                                        setConfirmRfqAction({ show: true, type: 'delete', rfq });
+                                                        setOpenRfqMenuId(null);
+                                                      }}
+                                                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors"
+                                                      style={{ color: '#DC2626' }}
+                                                      onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = '#FEE2E2';
+                                                      }}
+                                                      onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                      }}
+                                                    >
+                                                      <Trash2 size={14} />
+                                                      Delete
+                                                    </button>
+                                                  </>
+                                                )}
+                                                {rfq.status === 'sent' && (
+                                                  <button
+                                                    onClick={() => {
+                                                      setConfirmRfqAction({ show: true, type: 'decline', rfq });
+                                                      setOpenRfqMenuId(null);
+                                                    }}
+                                                    className="w-full text-left px-3 py-2 text-sm transition-colors"
+                                                    style={{ color: '#1F2937' }}
+                                                    onMouseEnter={(e) => {
+                                                      e.currentTarget.style.backgroundColor = '#F3F4F6';
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                      e.currentTarget.style.backgroundColor = 'transparent';
+                                                    }}
+                                                  >
+                                                    Decline
+                                                  </button>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  {/* Expanded RFQ Details */}
+                                  {expandedRfqId === rfq.id && (
+                                    <tr>
+                                      <td colSpan={6} className="px-3 py-4" style={{ backgroundColor: '#F9FAFB' }}>
+                                        <div className="space-y-3">
+                                          <div className="flex items-center justify-between">
+                                            <h4 className="text-sm font-semibold" style={{ color: '#1F2937' }}>
+                                              RFQ Details
+                                            </h4>
+                                            <button
+                                              onClick={() => setExpandedRfqId(null)}
+                                              className="text-sm font-medium transition-colors"
+                                              style={{ color: '#6B7280' }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.color = '#1F2937';
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.color = '#6B7280';
+                                              }}
+                                            >
+                                              Close
+                                            </button>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                              <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                RFQ Number
+                                              </label>
+                                              <p className="text-sm font-mono" style={{ color: '#1F2937' }}>
+                                                {rfq.rfq_number}
+                                              </p>
+                                            </div>
+                                            <div>
+                                              <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                Supplier
+                                              </label>
+                                              <p className="text-sm" style={{ color: '#1F2937' }}>
+                                                {rfq.supplier_name}
+                                              </p>
+                                            </div>
+                                            {rfq.contact_name && (
+                                              <div>
+                                                <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                  Contact
+                                                </label>
+                                                <p className="text-sm" style={{ color: '#1F2937' }}>
+                                                  {rfq.contact_name}
+                                                </p>
+                                              </div>
+                                            )}
+                                            <div>
+                                              <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                Status
+                                              </label>
+                                              <span
+                                                className="inline-block px-2 py-0.5 rounded-md text-xs font-medium"
+                                                style={getRfqStatusStyle(rfq.status)}
+                                              >
+                                                {rfq.status.replace('_', ' ')}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                Response Deadline
+                                              </label>
+                                              <p className="text-sm" style={{ color: '#1F2937' }}>
+                                                {new Date(rfq.response_deadline).toLocaleDateString()}
+                                              </p>
+                                            </div>
+                                            {rfq.sent_at && (
+                                              <div>
+                                                <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                  Sent At
+                                                </label>
+                                                <p className="text-sm" style={{ color: '#1F2937' }}>
+                                                  {new Date(rfq.sent_at).toLocaleDateString()}
+                                                </p>
+                                              </div>
+                                            )}
+                                          </div>
+                                          {rfq.notes && (
+                                            <div>
+                                              <label className="block text-xs font-medium mb-1" style={{ color: '#6B7280' }}>
+                                                Notes
+                                              </label>
+                                              <p className="text-sm" style={{ color: '#1F2937' }}>
+                                                {rfq.notes}
+                                              </p>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div
+                      className="p-8 rounded-xl text-center"
+                      style={{
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #E5E7EB',
+                        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                      }}
+                    >
+                      <p className="text-sm" style={{ color: '#6B7280' }}>
+                        Procurement has not been assigned yet. RFQs will be available once the request is approved for sourcing and procurement is assigned.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column (35%) */}
+          <div className="space-y-4">
+            {/* Client Info Card */}
+            <div
+              className="p-5 rounded-xl"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #E5E7EB',
+                boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+              }}
+            >
+              <h3 className="text-base font-semibold mb-3" style={{ color: '#1F2937' }}>
+                Client Information
+              </h3>
+              {client ? (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs font-medium mb-0.5" style={{ color: '#6B7280' }}>
+                      Company
+                    </label>
+                    <p className="text-sm" style={{ color: '#1F2937' }}>
+                      {client.company_name}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-0.5" style={{ color: '#6B7280' }}>
+                      Email
+                    </label>
+                    <p className="text-sm" style={{ color: '#1F2937' }}>
+                      {client.email}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-0.5" style={{ color: '#6B7280' }}>
+                      Phone
+                    </label>
+                    <p className="text-sm" style={{ color: '#1F2937' }}>
+                      {client.phone_1}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ color: '#9CA3AF' }}>Loading client info...</div>
+              )}
+            </div>
+
+            {/* Workflow Actions Card */}
+            <div
+              className="p-5 rounded-xl"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #E5E7EB',
+                boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+              }}
+            >
+              <h3 className="text-base font-semibold mb-3" style={{ color: '#1F2937' }}>
+                Actions
+              </h3>
+              <div className="space-y-2">
+                {/* Submit for Approval - Sales Specialist, Sales Manager, or COD when draft */}
+                {request.status === 'draft' && (hasSalesAccess || isCOD) && (
+                  <button
+                    onClick={() => handleWorkflowAction('submit')}
+                    className="w-full px-4 py-2 text-sm font-medium text-white rounded-lg"
+                    style={{ background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)' }}
+                  >
+                    Submit for Approval
+                  </button>
+                )}
+
+                {/* Edit Request - when draft */}
+                {request.status === 'draft' && (
+                  <Link
+                    to={`/requests/${id}/edit`}
+                    className="w-full px-4 py-2 text-sm font-medium rounded-lg flex items-center justify-center gap-2"
+                    style={{ backgroundColor: '#F3F4F6', color: '#1F2937' }}
+                  >
+                    <Edit2 size={14} />
+                    Edit Request
+                  </Link>
+                )}
+
+                {/* Delete Request - when draft */}
+                {request.status === 'draft' && (
+                  <button
+                    onClick={() => setDeleteRequestConfirm(true)}
+                    className="w-full px-4 py-2 text-sm font-medium text-white rounded-lg flex items-center justify-center gap-2"
+                    style={{ backgroundColor: '#EF4444' }}
+                  >
+                    <Trash2 size={14} />
+                    Delete Request
+                  </button>
+                )}
+
+                {/* Approve - Sales Manager or COD when pending approval */}
+                {request.status === 'pending_sales_manager_approval' && (hasSalesAccess || isCOD) && (
+                  <button
+                    onClick={() => setShowApproveModal(true)}
+                    className="w-full px-4 py-2 text-sm font-medium text-white rounded-lg"
+                    style={{ backgroundColor: '#10B981' }}
+                  >
+                    Approve
+                  </button>
+                )}
+
+                {/* Reject - Sales Manager or COD when pending approval */}
+                {request.status === 'pending_sales_manager_approval' && (hasSalesAccess || isCOD) && (
+                  <button
+                    onClick={() => setShowRejectModal(true)}
+                    className="w-full px-4 py-2 text-sm font-medium text-white rounded-lg"
+                    style={{ backgroundColor: '#EF4444' }}
+                  >
+                    Reject
+                  </button>
+                )}
+
+                {/* Assign Procurement - Procurement Manager or COD when approved for sourcing */}
+                {request.status === 'approved_for_sourcing' && (isProcurement || isCOD) && (
+                  <button
+                    onClick={() => {
+                      fetchProcurementUsers();
+                      setShowAssignModal(true);
+                    }}
+                    className="w-full px-4 py-2 text-sm font-medium text-white rounded-lg"
+                    style={{ background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)' }}
+                  >
+                    Assign Procurement
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Delete Item Confirmation */}
+      {deleteItemConfirm.show && deleteItemConfirm.itemId && (
+        <ConfirmDialog
+          title="Delete Item"
+          message="Are you sure you want to delete this item?"
+          onConfirm={() => handleDeleteItem(deleteItemConfirm.itemId!)}
+          onCancel={() => setDeleteItemConfirm({ show: false, itemId: null })}
+          confirmText="Delete"
+          confirmStyle="danger"
+        />
+      )}
+
+      {/* Delete Request Confirmation */}
+      {deleteRequestConfirm && (
+        <ConfirmDialog
+          title="Delete Request"
+          message="Are you sure you want to delete this request? This action cannot be undone and will remove all associated items."
+          onConfirm={handleDeleteRequest}
+          onCancel={() => setDeleteRequestConfirm(false)}
+          confirmText="Delete Request"
+          confirmStyle="danger"
+        />
+      )}
+
+      {/* Approve Modal */}
+      {showApproveModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => setShowApproveModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-md"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold mb-4" style={{ color: '#1F2937' }}>
+              Approve Request
+            </h2>
+            <p className="text-sm mb-4" style={{ color: '#6B7280' }}>
+              Add optional approval notes
+            </p>
+            <textarea
+              value={modalNotes}
+              onChange={(e) => setModalNotes(e.target.value)}
+              rows={3}
+              placeholder="Optional notes..."
+              className="w-full px-3 py-2 text-sm rounded-lg mb-4"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #E5E7EB',
+                color: '#1F2937',
+              }}
+            />
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowApproveModal(false);
+                  setModalNotes('');
+                }}
+                className="px-5 py-2 text-sm font-medium rounded-lg"
+                style={{ backgroundColor: '#F3F4F6', color: '#1F2937' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApprove}
+                className="px-5 py-2 text-sm font-medium text-white rounded-lg"
+                style={{ backgroundColor: '#10B981' }}
+              >
+                Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {showRejectModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => setShowRejectModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-md"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold mb-4" style={{ color: '#1F2937' }}>
+              Reject Request
+            </h2>
+            <p className="text-sm mb-4" style={{ color: '#6B7280' }}>
+              Rejection notes are required
+            </p>
+            <textarea
+              value={modalNotes}
+              onChange={(e) => setModalNotes(e.target.value)}
+              rows={3}
+              placeholder="Enter rejection reason..."
+              className="w-full px-3 py-2 text-sm rounded-lg mb-4"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #E5E7EB',
+                color: '#1F2937',
+              }}
+            />
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setModalNotes('');
+                }}
+                className="px-5 py-2 text-sm font-medium rounded-lg"
+                style={{ backgroundColor: '#F3F4F6', color: '#1F2937' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReject}
+                className="px-5 py-2 text-sm font-medium text-white rounded-lg"
+                style={{ backgroundColor: '#EF4444' }}
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Procurement Modal */}
+      {showAssignModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => setShowAssignModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-md"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold mb-4" style={{ color: '#1F2937' }}>
+              Assign Procurement User
+            </h2>
+            <p className="text-sm mb-4" style={{ color: '#6B7280' }}>
+              Select a procurement user to assign to this request
+            </p>
+            <select
+              value={assignUserId}
+              onChange={(e) => setAssignUserId(e.target.value)}
+              className="w-full px-3 py-2 text-sm rounded-lg mb-4"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #E5E7EB',
+                color: '#1F2937',
+              }}
+            >
+              <option value="">Select a user</option>
+              {procurementUsers.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.fullname}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowAssignModal(false);
+                  setAssignUserId('');
+                }}
+                className="px-5 py-2 text-sm font-medium rounded-lg"
+                style={{ backgroundColor: '#F3F4F6', color: '#1F2937' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAssignProcurement}
+                className="px-5 py-2 text-sm font-medium text-white rounded-lg"
+                style={{ background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)' }}
+              >
+                Assign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create RFQ Modal */}
+      {showCreateRfqModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => {
+            setShowCreateRfqModal(false);
+            setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+            setContacts([]);
+          }}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-md"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold" style={{ color: '#1F2937' }}>
+                Create RFQ
+              </h2>
+              <button
+                onClick={() => {
+                  setShowCreateRfqModal(false);
+                  setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+                  setContacts([]);
+                }}
+                className="p-1 rounded-md transition-colors"
+                style={{ color: '#9CA3AF' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Supplier *
+                </label>
+                <select
+                  value={rfqForm.supplier_id}
+                  onChange={(e) => {
+                    setRfqForm({ ...rfqForm, supplier_id: e.target.value, contact_id: '' });
+                    if (e.target.value) {
+                      fetchContacts(e.target.value);
+                    } else {
+                      setContacts([]);
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    border: '1px solid #D1D5DB',
+                    color: '#1F2937',
+                  }}
+                >
+                  <option value="">Select supplier</option>
+                  {suppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.company_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Contact
+                </label>
+                <select
+                  value={rfqForm.contact_id}
+                  onChange={(e) => setRfqForm({ ...rfqForm, contact_id: e.target.value })}
+                  disabled={!rfqForm.supplier_id}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    border: '1px solid #D1D5DB',
+                    color: '#1F2937',
+                    opacity: !rfqForm.supplier_id ? 0.5 : 1,
+                  }}
+                >
+                  <option value="">Select contact (optional)</option>
+                  {contacts.map((contact) => (
+                    <option key={contact.id} value={contact.id}>
+                      {contact.fullname} - {contact.position}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Response Deadline *
+                </label>
+                <DatePicker
+                  selected={rfqForm.response_deadline}
+                  onChange={(date) => setRfqForm({ ...rfqForm, response_deadline: date })}
+                  minDate={new Date()}
+                  placeholder="Select deadline"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Notes
+                </label>
+                <textarea
+                  value={rfqForm.notes}
+                  onChange={(e) => setRfqForm({ ...rfqForm, notes: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    border: '1px solid #D1D5DB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Add any additional notes..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowCreateRfqModal(false);
+                  setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+                  setContacts([]);
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: '#F3F4F6',
+                  color: '#374151',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#E5E7EB';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateRfq}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{
+                  background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)',
+                  color: '#ffffff',
+                }}
+              >
+                Create RFQ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit RFQ Modal */}
+      {showEditRfqModal && editingRfq && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => {
+            setShowEditRfqModal(false);
+            setEditingRfq(null);
+            setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+          }}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-md"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold" style={{ color: '#1F2937' }}>
+                Edit RFQ
+              </h2>
+              <button
+                onClick={() => {
+                  setShowEditRfqModal(false);
+                  setEditingRfq(null);
+                  setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+                }}
+                className="p-1 rounded-md transition-colors"
+                style={{ color: '#9CA3AF' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Response Deadline *
+                </label>
+                <DatePicker
+                  selected={rfqForm.response_deadline}
+                  onChange={(date) => setRfqForm({ ...rfqForm, response_deadline: date })}
+                  minDate={new Date()}
+                  placeholder="Select deadline"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Notes
+                </label>
+                <textarea
+                  value={rfqForm.notes}
+                  onChange={(e) => setRfqForm({ ...rfqForm, notes: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{
+                    border: '1px solid #D1D5DB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Add any additional notes..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditRfqModal(false);
+                  setEditingRfq(null);
+                  setRfqForm({ supplier_id: '', contact_id: '', response_deadline: null, notes: '' });
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: '#F3F4F6',
+                  color: '#374151',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#E5E7EB';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditRfq}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{
+                  background: 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)',
+                  color: '#ffffff',
+                }}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm RFQ Action Dialog */}
+      {confirmRfqAction.show && confirmRfqAction.rfq && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', animation: 'fadeIn 0.2s ease-out' }}
+          onClick={() => setConfirmRfqAction({ show: false, type: null, rfq: null })}
+        >
+          <div
+            className="bg-white rounded-xl p-6 w-full max-w-sm"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              animation: 'scaleIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-2" style={{ color: '#1F2937' }}>
+              {confirmRfqAction.type === 'decline' ? 'Decline RFQ' : 'Delete RFQ'}
+            </h3>
+            <p className="text-sm mb-6" style={{ color: '#6B7280' }}>
+              {confirmRfqAction.type === 'decline'
+                ? `Are you sure you want to decline this RFQ from ${confirmRfqAction.rfq.supplier_name}? This cannot be undone.`
+                : `Are you sure you want to delete this RFQ? This action cannot be undone.`}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmRfqAction({ show: false, type: null, rfq: null })}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: '#F3F4F6',
+                  color: '#374151',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#E5E7EB';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmRfqAction.type === 'decline') {
+                    handleDeclineRfq(confirmRfqAction.rfq!);
+                  } else {
+                    handleDeleteRfq(confirmRfqAction.rfq!);
+                  }
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{
+                  backgroundColor: '#DC2626',
+                  color: '#ffffff',
+                }}
+              >
+                {confirmRfqAction.type === 'decline' ? 'Decline' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

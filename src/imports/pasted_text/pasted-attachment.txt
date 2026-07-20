@@ -1,0 +1,141 @@
+I need you to build the frontend for a B2B ERP system called Commerce-Flow. The backend is FastAPI running at http://localhost:8000. Stack: React + Vite + Tailwind CSS + React Router v6.
+Phase 1 — Foundation, Auth, and Layout
+Build the following:
+
+1. Project structure
+src/
+  api/          — API client and all endpoint functions
+  components/   — reusable shared components
+  context/      — React contexts
+  pages/        — page components
+  hooks/        — custom hooks
+
+2. API client (src/api/client.js)
+A fetch wrapper that:
+
+Prefixes every request with http://localhost:8000
+Reads access_token from localStorage and adds Authorization: Bearer <token> header on every request
+On 401 response: clears localStorage and redirects to /login
+On any non-ok response: throws an error with the response JSON detail message
+Exports a typed apiClient with get, post, patch, delete methods
+
+
+3. Auth context (src/context/AuthContext.jsx)
+A React context that:
+
+On mount calls GET /users/me to get the current user
+Stores { user, isLoading, isAuthenticated } in context
+Exposes login(email, password) — calls POST /auth/login, stores token, fetches user
+Exposes logout() — clears token, redirects to /login
+Exposes these role helpers derived from user.roles:
+jsisCOD
+isSalesManager
+isSalesSpecialist
+isProcurementManager
+isProcurementSpecialist
+hasSalesAccess        // Sales Specialist OR Sales Manager OR COD
+hasProcurementAccess  // Procurement Manager OR Procurement Specialist OR COD
+
+user.roles is an array of objects: [{ id, name, description }] — check by roles.some(r => r.name === "COD")
+
+
+4. Login page (/login)
+
+No sidebar — full page centered card on bg-gray-50
+"Commerce-Flow" title above the card
+Fields: Email, Password
+"Sign in" button — full width, bg-gray-900 text-white
+On submit: calls login() from AuthContext → on success redirects to /requests
+On error: shows "Invalid email or password" inline below the form
+If already authenticated redirect away from login automatically
+
+
+5. Protected route wrapper
+A <ProtectedRoute> component that:
+
+Shows a loading spinner while isLoading is true
+Redirects to /login if not authenticated
+Optionally accepts allowedRoles array — redirects to /unauthorized if user's roles don't match
+
+
+6. AppLayout (src/components/AppLayout.jsx)
+┌─────────────────────────────────────────────────────┐
+│ Sidebar  w-60  bg-white  border-r border-gray-200   │
+│  · "Commerce-Flow" text logo top-left               │
+│  · Nav groups with links (see below)                │
+│  · Current user fullname + role at bottom           │
+│  · Logout button at very bottom                     │
+├─────────────────────────────────────────────────────┤
+│ Main  flex-1  bg-gray-50  overflow-y-auto           │
+│  · Content: p-8  max-w-7xl mx-auto                 │
+└─────────────────────────────────────────────────────┘
+Sidebar nav renders based on role from AuthContext:
+LinkPathVisible toRequests/requestsEveryoneOffers/offersSales Specialist, Sales Manager, CODRFQs/rfqsProcurement Manager, Procurement Specialist, CODQuotations/quotationsProcurement Manager, Procurement Specialist, CODPurchase Orders/purchase-ordersProcurement Manager, Procurement Specialist, CODClients/clientsSales Specialist, Sales Manager, CODSuppliers/suppliersEveryoneContacts/contactsEveryoneUsers/usersCOD onlyRoles/rolesCOD only
+Active link style: bg-gray-100 text-gray-900 font-medium rounded-md
+Inactive: text-gray-600 hover:bg-gray-50 rounded-md
+
+7. Shared reusable components
+Build these now — they will be used on every page:
+StatusBadge.jsx — takes a status string, returns a styled pill:
+draft                          → bg-gray-100 text-gray-700
+pending_sales_manager_approval → bg-yellow-100 text-yellow-800
+approved_for_sourcing          → bg-blue-100 text-blue-800
+rfq_in_progress                → bg-indigo-100 text-indigo-800
+quotation_review               → bg-purple-100 text-purple-800
+offer_in_progress              → bg-orange-100 text-orange-800
+approved_by_client             → bg-green-100 text-green-800
+po_in_progress                 → bg-teal-100 text-teal-800
+shipment_in_progress           → bg-cyan-100 text-cyan-800
+closed                         → bg-gray-200 text-gray-600
+rejected                       → bg-red-100 text-red-700
+draft (offer)                  → bg-gray-100 text-gray-700
+pending_cod_approval           → bg-yellow-100 text-yellow-800
+cod_approved                   → bg-green-100 text-green-800
+cod_rejected                   → bg-red-100 text-red-700
+changes_requested              → bg-orange-100 text-orange-800
+sent_to_client                 → bg-blue-100 text-blue-800
+client_approved                → bg-green-100 text-green-800
+client_rejected                → bg-red-100 text-red-700
+revision_requested             → bg-amber-100 text-amber-800
+received                       → bg-gray-100 text-gray-700
+under_review                   → bg-yellow-100 text-yellow-800
+selected                       → bg-green-100 text-green-800
+superseded                     → bg-gray-200 text-gray-500
+sent                           → bg-blue-100 text-blue-700
+accepted                       → bg-emerald-100 text-emerald-800
+Format the label: replace underscores with spaces, capitalize first letter.
+ConfirmDialog.jsx — modal with title, message, Cancel + red Confirm buttons. Props: isOpen, title, message, onConfirm, onCancel.
+Toast.jsx — simple toast notification system. Expose useToast() hook with toast.success(msg) and toast.error(msg). Toasts appear bottom-right, auto-dismiss after 3 seconds.
+PageHeader.jsx — takes title and optional action (button). Renders text-2xl font-semibold text-gray-900 title with action button top-right.
+EmptyState.jsx — centered dashed border box with message. Props: message, optional action button.
+LoadingSpinner.jsx — centered spinner for page loading states.
+
+8. Router setup (src/main.jsx or src/App.jsx)
+/login                → LoginPage (public)
+/unauthorized         → simple "Access denied" page (public)
+/ (layout wrapper)    → AppLayout + ProtectedRoute
+  /requests           → placeholder "Requests coming in Phase 2"
+  /offers             → placeholder
+  /rfqs               → placeholder
+  /quotations         → placeholder
+  /purchase-orders    → placeholder
+  /clients            → placeholder
+  /suppliers          → placeholder
+  /contacts           → placeholder
+  /users              → placeholder
+  /roles              → placeholder
+All routes under / are protected. Redirect / to /requests.
+
+Design system:
+
+Font: system sans-serif, no Google Fonts
+Page bg: bg-gray-50
+Cards: bg-white rounded-lg border border-gray-200 p-6
+Primary button: bg-gray-900 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-700
+Outline button: border border-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50
+Inputs: block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900
+No shadows except subtle shadow-sm on cards
+Minimalist — no decorative elements, icons only where functional
+
+
+Deliver all files with full code. No placeholders inside the components themselves — the shared components must be fully working. Only the page routes are placeholders for now.

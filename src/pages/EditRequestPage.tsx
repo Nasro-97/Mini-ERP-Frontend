@@ -1,0 +1,371 @@
+import React, { useState, useEffect } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
+import { apiClient } from '../api/client';
+import { DatePicker } from '../components/DatePicker';
+
+interface Client {
+  id: string;
+  company_name: string;
+}
+
+interface Request {
+  id: string;
+  title: string;
+  client_id: string;
+  client_reference: string;
+  request_date: string;
+  deadline: string;
+  required_date: string;
+  priority: string;
+  description: string;
+  notes: string;
+}
+
+export const EditRequestPage: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [formData, setFormData] = useState({
+    title: '',
+    client_id: '',
+    client_reference: '',
+    priority: 'normal',
+    description: '',
+    notes: '',
+  });
+
+  const [requestDate, setRequestDate] = useState<Date | null>(null);
+  const [deadline, setDeadline] = useState<Date | null>(null);
+  const [requiredDate, setRequiredDate] = useState<Date | null>(null);
+
+  useEffect(() => {
+    fetchClients();
+    fetchRequest();
+  }, [id]);
+
+  const fetchClients = async () => {
+    try {
+      const data = await apiClient.get<Client[]>('/clients/');
+      setClients(data);
+    } catch (error) {
+      console.error('Error fetching clients:', error);
+    }
+  };
+
+  const fetchRequest = async () => {
+    try {
+      const data = await apiClient.get<Request>(`/requests/${id}`);
+      setFormData({
+        title: data.title,
+        client_id: data.client_id,
+        client_reference: data.client_reference,
+        priority: data.priority,
+        description: data.description || '',
+        notes: data.notes || '',
+      });
+      setRequestDate(new Date(data.request_date));
+      setDeadline(new Date(data.deadline));
+      setRequiredDate(new Date(data.required_date));
+    } catch (error) {
+      console.error('Error fetching request:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!requestDate || !deadline || !requiredDate) {
+      setError('Please select request date, deadline, and required date');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      await apiClient.patch(`/requests/${id}`, {
+        title: formData.title,
+        client_id: formData.client_id,
+        client_reference: formData.client_reference,
+        priority: formData.priority,
+        request_date: requestDate.toISOString(),
+        deadline: deadline.toISOString(),
+        required_date: requiredDate.toISOString(),
+        description: formData.description || null,
+        notes: formData.notes || null,
+      });
+
+      navigate(`/requests/${id}`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update request');
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center" style={{ minHeight: '100vh' }}>
+        <div style={{ color: '#9CA3AF' }}>Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6" style={{ backgroundColor: '#F5F7FA', minHeight: '100vh', animation: 'fadeIn 0.3s ease-out' }}>
+      <div className="max-w-3xl mx-auto">
+        {/* Back Link */}
+        <Link
+          to={`/requests/${id}`}
+          className="inline-flex items-center gap-2 mb-4 text-sm font-medium transition-colors"
+          style={{ color: '#6B7280' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#4C5FD5';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#6B7280';
+          }}
+        >
+          <ArrowLeft size={16} />
+          Back to Request
+        </Link>
+
+        {/* Page Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold" style={{ color: '#1F2937' }}>
+            Edit Request
+          </h1>
+          <p className="text-sm mt-1" style={{ color: '#9CA3AF' }}>
+            Update request information
+          </p>
+        </div>
+
+        {/* Form Card */}
+        <div
+          className="p-6 rounded-xl"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #E5E7EB',
+            boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+          }}
+        >
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-5">
+              {/* Title */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Title <span style={{ color: '#EF4444' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Enter request title"
+                />
+              </div>
+
+              {/* Client */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Client <span style={{ color: '#EF4444' }}>*</span>
+                </label>
+                <select
+                  required
+                  value={formData.client_id}
+                  onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                >
+                  <option value="">Select a client</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.company_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Client Reference */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Client Reference <span style={{ color: '#EF4444' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formData.client_reference}
+                  onChange={(e) => setFormData({ ...formData, client_reference: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Enter client reference number"
+                />
+              </div>
+
+              {/* Request Date, Deadline & Required Date */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                    Request Date <span style={{ color: '#EF4444' }}>*</span>
+                  </label>
+                  <DatePicker
+                    selected={requestDate}
+                    onChange={(date) => setRequestDate(date)}
+                    placeholder="Select request date"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                    Deadline <span style={{ color: '#EF4444' }}>*</span>
+                  </label>
+                  <DatePicker
+                    selected={deadline}
+                    onChange={(date) => setDeadline(date)}
+                    placeholder="Select deadline"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                    Required Date <span style={{ color: '#EF4444' }}>*</span>
+                  </label>
+                  <DatePicker
+                    selected={requiredDate}
+                    onChange={(date) => setRequiredDate(date)}
+                    placeholder="Select required date"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Priority */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Priority
+                </label>
+                <select
+                  value={formData.priority}
+                  onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                >
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Description
+                </label>
+                <textarea
+                  rows={4}
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Enter request description"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: '#1F2937' }}>
+                  Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  className="w-full px-3 py-2 text-sm rounded-lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #E5E7EB',
+                    color: '#1F2937',
+                  }}
+                  placeholder="Add any additional notes"
+                />
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div
+                  className="p-3 rounded-lg text-sm"
+                  style={{ backgroundColor: '#FEE2E2', color: '#991B1B' }}
+                >
+                  {error}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-3 pt-4">
+                <Link
+                  to={`/requests/${id}`}
+                  className="px-5 py-2 text-sm font-medium rounded-lg transition-colors"
+                  style={{
+                    backgroundColor: '#F3F4F6',
+                    color: '#1F2937',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#E5E7EB';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  }}
+                >
+                  Cancel
+                </Link>
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-5 py-2 text-sm font-medium text-white rounded-lg transition-all"
+                  style={{
+                    background: submitting ? '#9CA3AF' : 'linear-gradient(135deg, #4C5FD5 0%, #6366F1 100%)',
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {submitting ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
