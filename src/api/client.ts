@@ -1,5 +1,5 @@
 // Replace with your ngrok URL or your Mac's local IP address
-const BASE_URL = 'http://localhost:8000'; // Change this to your backend URL
+const API_URL = import.meta.env.VITE_API_URL; // Change this to your backend URL
 
 interface RequestOptions extends RequestInit {
   headers?: Record<string, string>;
@@ -7,7 +7,7 @@ interface RequestOptions extends RequestInit {
 
 class ApiClient {
   async request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const url = `${BASE_URL}${endpoint}`;
+    const url = `${API_URL}${endpoint}`;
     const token = localStorage.getItem('access_token');
 
     const headers: Record<string, string> = {
